@@ -1,11 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
 
 export default function StrategyDetailPage() {
+  return (
+    <Suspense fallback={null}>
+      <StrategyDetailContent />
+    </Suspense>
+  );
+}
+
+function StrategyDetailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isLoggedIn, isChecking } = useAuth();
