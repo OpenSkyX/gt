@@ -30,7 +30,7 @@ async function main() {
     console.log("\n📊 表验证:");
     for (const table of tables) {
       try {
-        const count = await table.model.count();
+        const count = await (table.model as any).count();
         console.log(`✅ ${table.name.padEnd(15)} 存在 (${count} 条记录)`);
       } catch (error: any) {
         console.log(`❌ ${table.name.padEnd(15)} 错误: ${error.message}`);
