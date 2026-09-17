@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { loginAction } from "../actions/auth";
 
 export default function LoginPage() {
   const router = useRouter();
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [countdown, setCountdown] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSendCode = () => {
     if (!phone || phone.length !== 11) {
@@ -28,7 +30,7 @@ export default function LoginPage() {
     }, 1000);
   };
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!phone || phone.length !== 11) {
       alert("请输入正确的手机号");
       return;
@@ -38,13 +40,24 @@ export default function LoginPage() {
       return;
     }
 
-    // 模拟登录成功，保存登录状态
-    localStorage.setItem("isLoggedIn", "true");
-    localStorage.setItem("userPhone", phone);
-    localStorage.setItem("userName", `用户${phone.slice(-4)}`);
+    setIsSubmitting(true);
+    try {
+      const result = await loginAction(phone, code);
+      if (!result.success) {
+        alert(result.error);
+        return;
+      }
 
-    // 跳转到首页
-    router.push("/");
+      // 登录成功，保存登录状态供其余页面读取
+      localStorage.setItem("isLoggedIn", "true");
+      localStorage.setItem("userPhone", result.data.phone);
+      localStorage.setItem("userName", result.data.userName);
+      localStorage.setItem("inviteCode", result.data.inviteCode);
+
+      router.push("/");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -108,9 +121,10 @@ export default function LoginPage() {
             {/* Login Button */}
             <button
               onClick={handleLogin}
-              className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-semibold hover:from-cyan-600 hover:to-blue-700 shadow-lg shadow-cyan-500/30 hover:shadow-cyan-500/50 transition-all mt-2"
+              disabled={isSubmitting}
+              className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-semibold hover:from-cyan-600 hover:to-blue-700 shadow-lg shadow-cyan-500/30 hover:shadow-cyan-500/50 transition-all mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              登录
+              {isSubmitting ? "登录中..." : "登录"}
             </button>
 
             {/* Register Link */}

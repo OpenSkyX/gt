@@ -4,6 +4,7 @@ import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, Check, X, AlertCircle } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { getStrategyByIdAction, type StrategyInfo } from "../../actions/strategy";
 
 export default function StrategyConfigPage() {
   return (
@@ -19,42 +20,119 @@ function StrategyConfigContent() {
   const { isLoggedIn, isChecking } = useAuth();
 
   const strategyId = searchParams.get("id");
-  const strategyName = searchParams.get("name") || "策略配置";
-  const description = searchParams.get("desc") || "";
 
+  const [strategy, setStrategy] = useState<StrategyInfo | null>(null);
+  const [isLoadingStrategy, setIsLoadingStrategy] = useState(true);
   const [maxDrawdown, setMaxDrawdown] = useState(30);
-  const [hasApiKey, setHasApiKey] = useState(false);
-  const [apiValid, setApiValid] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
-  // 模拟检查条件
+  // 检查条件状态
+  const [checkResults, setCheckResults] = useState({
+    minimumPoints: { passed: false, message: undefined as string | undefined },
+    apiConfigured: { passed: false, message: undefined as string | undefined },
+    apiValid: { passed: false, message: undefined as string | undefined },
+    exchangeBalance: { passed: false, message: undefined as string | undefined },
+    custodianAvailable: { passed: false, message: undefined as string | undefined },
+  });
+  const [isCheckingConditions, setIsCheckingConditions] = useState(true);
+
+  // 根据 ID 获取策略信息
+  useEffect(() => {
+    if (!strategyId || !isLoggedIn) return;
+
+    const fetchStrategy = async () => {
+      setIsLoadingStrategy(true);
+      const result = await getStrategyByIdAction(strategyId);
+      if (result.success && result.data) {
+        setStrategy(result.data);
+      } else {
+        // 策略不存在，返回上一页
+        router.back();
+      }
+      setIsLoadingStrategy(false);
+    };
+
+    fetchStrategy();
+  }, [strategyId, isLoggedIn, router]);
+
+  // 执行检查条件
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const runChecks = async () => {
+      setIsCheckingConditions(true);
+
+      // 动态导入 actions
+      const { checkAllConditions } = await import("../../actions/strategy-checks");
+      const results = await checkAllConditions();
+
+      setCheckResults({
+        minimumPoints: { ...results.minimumPoints, message: results.minimumPoints.message || undefined },
+        apiConfigured: { ...results.apiConfigured, message: results.apiConfigured.message || undefined },
+        apiValid: { ...results.apiValid, message: results.apiValid.message || undefined },
+        exchangeBalance: { ...results.exchangeBalance, message: results.exchangeBalance.message || undefined },
+        custodianAvailable: { ...results.custodianAvailable, message: results.custodianAvailable.message || undefined },
+      });
+
+      setIsCheckingConditions(false);
+    };
+
+    runChecks();
+  }, [isLoggedIn]);
+
+  // 检查条件列表
   const conditions = [
     {
-      label: "最低500保证金",
-      checked: true,
-      status: "success" as const,
+      label: "最低500积分",
+      checked: checkResults.minimumPoints.passed,
+      status: checkResults.minimumPoints.passed ? ("success" as const) : ("error" as const),
+      message: checkResults.minimumPoints.message,
     },
     {
       label: "已配置交易所API",
-      checked: hasApiKey,
-      status: hasApiKey ? ("success" as const) : ("error" as const),
+      checked: checkResults.apiConfigured.passed,
+      status: checkResults.apiConfigured.passed ? ("success" as const) : ("error" as const),
+      message: checkResults.apiConfigured.message,
     },
     {
       label: "交易所API正确",
-      checked: apiValid,
-      status: apiValid ? ("success" as const) : ("warning" as const),
+      checked: checkResults.apiValid.passed,
+      status: checkResults.apiValid.passed ? ("success" as const) : ("error" as const),
+      message: checkResults.apiValid.message,
     },
     {
-      label: "交易所最低余额1000",
-      checked: true,
-      status: "success" as const,
+      label: "交易所最低余额1000 USDT",
+      checked: checkResults.exchangeBalance.passed,
+      status: checkResults.exchangeBalance.passed ? ("success" as const) : ("warning" as const),
+      message: checkResults.exchangeBalance.message,
+    },
+    {
+      label: "服务器资源可用",
+      checked: checkResults.custodianAvailable.passed,
+      status: checkResults.custodianAvailable.passed ? ("success" as const) : ("error" as const),
+      message: checkResults.custodianAvailable.message,
     },
   ];
 
   const allConditionsMet = conditions.every((c) => c.checked);
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!allConditionsMet) {
       alert("请先满足所有启动条件");
+      return;
+    }
+
+    // 启动前再次检查托管者可用性（防止并发情况下服务器已满）
+    const { checkCustodianAvailable } = await import("../../actions/strategy-checks");
+    const custodianCheck = await checkCustodianAvailable();
+
+    if (!custodianCheck.passed) {
+      alert(`❌ ${custodianCheck.message || "当前无可用服务器，请联系客服"}`);
+      // 刷新检查状态
+      setCheckResults(prev => ({
+        ...prev,
+        custodianAvailable: { ...custodianCheck, message: custodianCheck.message || undefined },
+      }));
       return;
     }
 
@@ -67,16 +145,56 @@ function StrategyConfigContent() {
       "• 手动开仓\n" +
       "• 手动平仓\n\n" +
       "如因手动干预操作导致亏损，由您自行承担，且不退还保证金。\n\n" +
+      `需要至少 500 积分\n` +
+      `策略：${strategy?.name || "未知策略"}\n` +
+      `最大回撤：${maxDrawdown}%\n\n` +
       "是否确认启动策略？"
     );
 
-    if (confirmed) {
-      alert(`策略启动成功\n策略名称：${strategyName}\n最大回撤：${maxDrawdown}%`);
+    if (!confirmed) {
+      return;
+    }
+
+    // 创建实盘
+    if (!strategyId || !strategy) {
+      alert("策略信息错误");
+      return;
+    }
+
+    setIsCreating(true);
+
+    try {
+      const { createQuantRunAction } = await import("../../actions/quant-run");
+
+      const result = await createQuantRunAction({
+        strategyId: strategyId,
+        maxDrawdown: maxDrawdown,
+      });
+
+      setIsCreating(false);
+
+      if (!result.success) {
+        alert(`❌ 启动失败\n${result.error}`);
+        return;
+      }
+
+      alert(
+        `✅ 策略启动成功！\n\n` +
+        `策略名称：${strategy.name}\n` +
+        `最大回撤：${maxDrawdown}%\n` +
+        `实盘ID：${result.data.quantRunId}\n\n` +
+        `（需要至少 500 积分）`
+      );
+
       router.push("/quant");
+    } catch (error) {
+      setIsCreating(false);
+      console.error("启动策略失败:", error);
+      alert(`❌ 启动失败\n${error instanceof Error ? error.message : "未知错误"}`);
     }
   };
 
-  if (isChecking) {
+  if (isChecking || isLoadingStrategy) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-slate-400">加载中...</div>
@@ -84,12 +202,28 @@ function StrategyConfigContent() {
     );
   }
 
-  if (!isLoggedIn) {
+  if (!isLoggedIn || !strategy) {
     return null;
   }
 
   return (
     <div className="h-full flex flex-col bg-slate-950">
+      {/* Loading Overlay */}
+      {isCreating && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="glass-card rounded-xl p-6 flex flex-col items-center gap-4">
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 border-4 border-slate-700/30 rounded-full"></div>
+              <div className="absolute inset-0 border-4 border-transparent border-t-cyan-400 rounded-full animate-spin"></div>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-semibold text-slate-200 mb-1">正在启动策略</p>
+              <p className="text-sm text-slate-400">请稍候，正在创建实盘...</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="glass-card border-b border-slate-700/50">
         <div className="max-w-md mx-auto px-4 py-4 flex items-center gap-3">
@@ -127,6 +261,7 @@ function StrategyConfigContent() {
                   type="range"
                   min="30"
                   max="100"
+                  step="10"
                   value={maxDrawdown}
                   onChange={(e) => setMaxDrawdown(Number(e.target.value))}
                   className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer slider"
@@ -136,8 +271,15 @@ function StrategyConfigContent() {
                     }%, #334155 ${((maxDrawdown - 30) / 70) * 100}%, #334155 100%)`,
                   }}
                 />
+                {/* 显示所有可选节点 */}
                 <div className="flex justify-between mt-2 text-xs text-slate-500">
                   <span>30%</span>
+                  <span>40%</span>
+                  <span>50%</span>
+                  <span>60%</span>
+                  <span>70%</span>
+                  <span>80%</span>
+                  <span>90%</span>
                   <span>100%</span>
                 </div>
               </div>
@@ -150,25 +292,50 @@ function StrategyConfigContent() {
 
           {/* Conditions Check */}
           <div className="glass-card rounded-xl p-3">
-            <h3 className="text-xs font-semibold text-slate-100 mb-2">
-              启动条件检查
-            </h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-slate-100">
+                启动条件检查
+              </h3>
+              <button
+                onClick={async () => {
+                  setIsCheckingConditions(true);
+                  const { checkAllConditions } = await import("../../actions/strategy-checks");
+                  const results = await checkAllConditions();
+                  setCheckResults({
+                    minimumPoints: { ...results.minimumPoints, message: results.minimumPoints.message || undefined },
+                    apiConfigured: { ...results.apiConfigured, message: results.apiConfigured.message || undefined },
+                    apiValid: { ...results.apiValid, message: results.apiValid.message || undefined },
+                    exchangeBalance: { ...results.exchangeBalance, message: results.exchangeBalance.message || undefined },
+                    custodianAvailable: { ...results.custodianAvailable, message: results.custodianAvailable.message || undefined },
+                  });
+                  setIsCheckingConditions(false);
+                }}
+                disabled={isCheckingConditions}
+                className="text-xs text-cyan-400 hover:text-cyan-300 disabled:text-slate-500"
+              >
+                {isCheckingConditions ? "检查中..." : "重新检查"}
+              </button>
+            </div>
 
             <div className="space-y-1.5">
               {conditions.map((condition, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between py-1.5"
-                >
-                  <span className="text-xs text-slate-400">
-                    {condition.label}
-                  </span>
-                  {condition.status === "success" ? (
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  ) : condition.status === "error" ? (
-                    <X className="w-3.5 h-3.5 text-red-400" />
-                  ) : (
-                    <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                <div key={index}>
+                  <div className="flex items-center justify-between py-1.5">
+                    <span className="text-xs text-slate-400">
+                      {condition.label}
+                    </span>
+                    {condition.status === "success" ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : condition.status === "error" ? (
+                      <X className="w-3.5 h-3.5 text-red-400" />
+                    ) : (
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                    )}
+                  </div>
+                  {!condition.checked && condition.message && (
+                    <p className="text-xs text-red-400/80 pl-2 pb-1">
+                      {condition.message}
+                    </p>
                   )}
                 </div>
               ))}
@@ -178,7 +345,7 @@ function StrategyConfigContent() {
               <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded flex items-start gap-1.5">
                 <AlertCircle className="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
                 <p className="text-xs text-amber-400">
-                  请配置交易所API并验证
+                  请完成所有启动条件后再启动策略
                 </p>
               </div>
             )}
@@ -209,14 +376,18 @@ function StrategyConfigContent() {
           {/* Start Button */}
           <button
             onClick={handleStart}
-            disabled={!allConditionsMet}
+            disabled={!allConditionsMet || isCreating}
             className={`w-full py-3.5 rounded-xl font-semibold transition-all ${
-              allConditionsMet
+              allConditionsMet && !isCreating
                 ? "bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:from-cyan-600 hover:to-blue-700 shadow-lg shadow-cyan-500/30"
                 : "bg-slate-700/50 text-slate-500 cursor-not-allowed"
             }`}
           >
-            {allConditionsMet ? "启动策略" : "请先满足启动条件"}
+            {isCreating
+              ? "启动中..."
+              : allConditionsMet
+              ? "启动策略"
+              : "请先满足启动条件"}
           </button>
         </div>
       </div>

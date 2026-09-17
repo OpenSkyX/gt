@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { registerAction } from "../actions/auth";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -10,6 +11,7 @@ export default function RegisterPage() {
   const [code, setCode] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [countdown, setCountdown] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSendCode = () => {
     if (!phone || phone.length !== 11) {
@@ -29,7 +31,7 @@ export default function RegisterPage() {
     }, 1000);
   };
 
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!phone || phone.length !== 11) {
       alert("请输入正确的手机号");
       return;
@@ -39,16 +41,24 @@ export default function RegisterPage() {
       return;
     }
 
-    // 模拟注册成功，保存登录状态
-    localStorage.setItem("isLoggedIn", "true");
-    localStorage.setItem("userPhone", phone);
-    localStorage.setItem("userName", `用户${phone.slice(-4)}`);
-    if (inviteCode) {
-      localStorage.setItem("inviteCode", inviteCode);
-    }
+    setIsSubmitting(true);
+    try {
+      const result = await registerAction(phone, code, inviteCode);
+      if (!result.success) {
+        alert(result.error);
+        return;
+      }
 
-    // 跳转到首页
-    router.push("/");
+      // 注册成功，保存登录状态供其余页面读取（这里存的是用户自己的邀请码，不是填写的邀请码）
+      localStorage.setItem("isLoggedIn", "true");
+      localStorage.setItem("userPhone", result.data.phone);
+      localStorage.setItem("userName", result.data.userName);
+      localStorage.setItem("inviteCode", result.data.inviteCode);
+
+      router.push("/");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -126,9 +136,10 @@ export default function RegisterPage() {
             {/* Register Button */}
             <button
               onClick={handleRegister}
-              className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-semibold hover:from-cyan-600 hover:to-blue-700 shadow-lg shadow-cyan-500/30 hover:shadow-cyan-500/50 transition-all mt-2"
+              disabled={isSubmitting}
+              className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-semibold hover:from-cyan-600 hover:to-blue-700 shadow-lg shadow-cyan-500/30 hover:shadow-cyan-500/50 transition-all mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              注册
+              {isSubmitting ? "注册中..." : "注册"}
             </button>
 
             {/* Login Link */}

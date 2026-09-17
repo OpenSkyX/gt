@@ -1,0 +1,305 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AvatarType {
+  AUTO
+  UPLOAD
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAW
+  TRANSFER_IN
+  TRANSFER_OUT
+  REBATE
+  ACTIVATION
+}
+
+enum TransactionStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum QuantRunStatus {
+  RUNNING
+  STOPPED
+}
+
+enum DepositStatus {
+  PENDING      // 待确认
+  CONFIRMED    // 已确认（达到确认数）
+  CREDITED     // 已入账
+  FAILED       // 失败
+  REORGED      // 被重组
+}
+
+model User {
+  id           String     @id @default(cuid())
+  phone        String     @unique
+  userName     String
+  avatarType   AvatarType @default(AUTO)
+  avatarImage  String?
+  avatarText   String     @default("GT")
+  avatarColor  String     @default("from-cyan-500 to-blue-600")
+  fundPassword String?
+
+  isActivated Boolean   @default(false)
+  activatedAt DateTime?
+
+  inviteCode String @unique
+
+  fundingBalance   Decimal @default(0) @db.Decimal(20, 8)
+  pointsBalance    Decimal @default(0) @db.Decimal(20, 8)
+  todayProfitLoss  Decimal @default(0) @db.Decimal(20, 8) // 今日盈亏（正数为盈利，负数为亏损）
+
+  apiKey       ExchangeApiKey?
+  wallet       Wallet?
+  transactions Transaction[]
+  quantRuns    QuantRun[]
+  pendingDeposits PendingDeposit[]
+
+  invitationSent     Invitation[] @relation("InvitationInviter")
+  invitationReceived Invitation?  @relation("InvitationInvitee")
+
+  activationRewardsGiven    ActivationReward[] @relation("ActivationInviter")
+  activationRewardsReceived ActivationReward[] @relation("ActivationInvitee")
+  commissionsEarned         CommissionRecord[] @relation("CommissionInviter")
+  commissionsGenerated      CommissionRecord[] @relation("CommissionInvitee")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// 邀请关系表：记录谁邀请了谁，一个用户最多被邀请一次（inviteeId 唯一）
+model Invitation {
+  id         String @id @default(cuid())
+  inviteCode String
+
+  inviterId String
+  inviter   User   @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  inviteeId String @unique
+  invitee   User   @relation("InvitationInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([inviterId])
+}
+
+/**
+ * 交易所类型字典表（本地数据库的交易所类型）
+ * id: 本地数据库主键（1=gate, 2=binance）
+ * code: 交易所代码（用于前端选择和映射）
+ * name: 交易所显示名称
+ *
+ * 注意：此表的 id 与第三方平台（XMX）的交易所ID不同
+ * XMX平台ID定义在 lib/xmx/client.ts 的 EXCHANGE_ID_MAP
+ */
+model ExchangeType {
+  id   Int    @id
+  code String @unique
+  name String
+
+  apiKeys ExchangeApiKey[]
+}
+
+// 用户绑定的交易所 API，每个用户全局最多只能绑定一个交易所的一个 API
+model ExchangeApiKey {
+  id         String  @id @default(cuid())
+  apiKey     String
+  apiSecret  String
+  passphrase String?
+  isValid    Boolean @default(false)
+
+  // 与第三方平台 XMX 关联的账号 ID（比如 XMX 侧的经纪商子账号/UID）
+  xmxAssociationId String?
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  exchangeTypeId Int
+  exchangeType   ExchangeType @relation(fields: [exchangeTypeId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Transaction {
+  id       String            @id @default(cuid())
+  type     TransactionType
+  status   TransactionStatus @default(PROCESSING)
+  amount   Decimal           @db.Decimal(20, 8)
+  currency String            @default("USDT")
+  address  String?
+
+  // 区块链交易信息（充值/提现时使用）
+  txHash      String?   @unique // 交易哈希（唯一，用于去重）
+  blockNumber BigInt? // 区块号
+  timestamp   DateTime? // 交易时间戳（区块时间）
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([txHash])
+  @@index([type, status])
+}
+
+// 用户钱包表：存储用户的区块链钱包地址和加密的私钥
+model Wallet {
+  id         String @id @default(cuid())
+  address    String @unique // 钱包地址
+  privateKey String // 加密后的私钥
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model QuantStrategy {
+  id             String    @id @default(cuid())
+  name           String
+  icon           String
+  iconBg         String
+  description    String
+  features       String[]
+  expectedReturn String
+  riskLevel      RiskLevel
+  minInvestment  Decimal   @db.Decimal(20, 8)
+  badge          String?
+
+  // 第三方平台（如 XMX）的策略ID
+  thirdPartyStrategyId String?
+
+  runs QuantRun[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// 量化实盘运行记录表
+model QuantRun {
+  id String @id @default(cuid())
+
+  // 第三方平台关联（如 XMX）
+  thirdPartyRunId      String? // 第三方实盘ID
+  thirdPartyStrategyId String? // 第三方策略ID（冗余字段，便于查询）
+
+  // 状态
+  status QuantRunStatus @default(RUNNING)
+
+  // 资金信息
+  initialBalance Decimal @db.Decimal(20, 8) // 起始资金
+  currentBalance Decimal @db.Decimal(20, 8) // 当前资金（运行中实时更新）
+  finalBalance   Decimal? @db.Decimal(20, 8) // 结束资金（停止后记录）
+  realizedProfit Decimal @default(0) @db.Decimal(20, 8) // 已实现盈利
+
+  // 风控指标
+  maxDrawdown Int // 最大回撤百分比
+
+  // 关联关系
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  strategyId String
+  strategy   QuantStrategy @relation(fields: [strategyId], references: [id], onDelete: Restrict)
+
+  // 时间记录
+  startedAt DateTime  @default(now()) // 起始时间
+  endedAt   DateTime? // 结束时间（运行中为 null）
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([strategyId])
+  @@index([status])
+  @@index([thirdPartyRunId])
+}
+
+model ActivationReward {
+  id     String  @id @default(cuid())
+  amount Decimal @db.Decimal(20, 8)
+
+  inviterId String
+  inviter   User   @relation("ActivationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  inviteeId String
+  invitee   User   @relation("ActivationInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  activatedAt DateTime @default(now())
+
+  @@index([inviterId])
+}
+
+model CommissionRecord {
+  id             String  @id @default(cuid())
+  tradingVolume  Decimal @db.Decimal(20, 8)
+  commission     Decimal @db.Decimal(20, 8)
+  commissionRate Decimal @db.Decimal(6, 4)
+
+  inviterId String
+  inviter   User   @relation("CommissionInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  inviteeId String
+  invitee   User   @relation("CommissionInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  tradedAt DateTime @default(now())
+
+  @@index([inviterId])
+}
+
+// 区块链监听状态表
+model MonitorState {
+  id                 String   @id @default(cuid())
+  network            String   @unique @default("arbitrum-sepolia")
+  lastProcessedBlock BigInt   @default(0)
+  lastProcessedHash  String   @default("")
+  isRunning          Boolean  @default(false)
+  lastHeartbeat      DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// 待确认充值表
+model PendingDeposit {
+  id            String        @id @default(cuid())
+  txHash        String        @unique
+  blockNumber   BigInt
+  blockHash     String
+  fromAddress   String
+  toAddress     String // 用户钱包地址
+  amount        Decimal       @db.Decimal(20, 8)
+  tokenAddress  String? // null = ETH, 否则为代币地址（如 USDT）
+  confirmations Int           @default(0)
+  status        DepositStatus @default(PENDING)
+  timestamp     DateTime      @default(now()) // 交易时间戳（区块时间）
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([toAddress])
+  @@index([status])
+  @@index([blockNumber])
+  @@index([userId])
+  @@index([timestamp])
+}

@@ -4,6 +4,7 @@ import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { getStrategyByIdAction, type StrategyInfo } from "../../actions/strategy";
 
 export default function StrategyDetailPage() {
   return (
@@ -18,15 +19,39 @@ function StrategyDetailContent() {
   const searchParams = useSearchParams();
   const { isLoggedIn, isChecking } = useAuth();
 
-  const strategyName = searchParams.get("name") || "策略详情";
+  const runId = searchParams.get("runId");
+  const [quantRun, setQuantRun] = useState<any>(null);
+  const [isLoadingRun, setIsLoadingRun] = useState(true);
+  const [isStopping, setIsStopping] = useState(false);
 
-  // 模拟数据
+  // 根据实盘ID获取实盘详情
+  useEffect(() => {
+    if (!runId || !isLoggedIn) return;
+
+    const fetchQuantRun = async () => {
+      setIsLoadingRun(true);
+      const { getQuantRunDetailAction } = await import("../../actions/quant-run");
+      const result = await getQuantRunDetailAction(runId);
+      if (result.success && result.data) {
+        setQuantRun(result.data);
+      } else {
+        alert("无法获取实盘详情");
+        router.back();
+      }
+      setIsLoadingRun(false);
+    };
+
+    fetchQuantRun();
+  }, [runId, isLoggedIn, router]);
+
+  // 计算实盘数据
   const [currentTime, setCurrentTime] = useState(new Date());
-  const initialFunds = 10000;
-  const currentFunds = 12345.67;
-  const profit = currentFunds - initialFunds;
-  const profitRate = ((profit / initialFunds) * 100).toFixed(2);
-  const startTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7天前
+
+  const initialFunds = quantRun ? Number(quantRun.initialBalance) : 0;
+  const profit = quantRun ? Number(quantRun.realizedProfit) : 0; // 使用已实现盈利
+  const currentFunds = initialFunds + profit; // 当前资金 = 初始资金 + 盈利
+  const profitRate = initialFunds > 0 ? ((profit / initialFunds) * 100).toFixed(2) : "0.00";
+  const startTime = quantRun ? new Date(quantRun.startedAt) : new Date();
 
   // 计算已运行时间
   const runningTime = currentTime.getTime() - startTime.getTime();
@@ -44,14 +69,41 @@ function StrategyDetailContent() {
     return () => clearInterval(timer);
   }, []);
 
-  const handleStop = () => {
-    if (confirm("确定要停止该策略吗？")) {
-      alert("策略已停止");
-      router.push("/quant");
+  const handleStop = async () => {
+    if (!quantRun || !runId) return;
+
+    const confirmed = confirm(
+      `⚠️ 确定要停止该策略吗？\n\n` +
+      `策略名称：${quantRun.strategy.name}\n` +
+      `当前余额：${currentFunds.toFixed(2)}\n` +
+      `盈亏：${profit >= 0 ? '+' : ''}${profit.toFixed(2)} (${profitRate}%)\n\n` +
+      `停止后将无法重新启动，但可以创建新的实盘。`
+    );
+
+    if (!confirmed) return;
+
+    setIsStopping(true);
+
+    try {
+      const { stopQuantRunAction } = await import("../../actions/quant-run");
+      const result = await stopQuantRunAction(runId);
+
+      setIsStopping(false);
+
+      if (result.success) {
+        alert(`✅ 策略已停止\n\n最终余额：${currentFunds.toFixed(2)}\n盈亏：${profit >= 0 ? '+' : ''}${profit.toFixed(2)}`);
+        router.push("/quant");
+      } else {
+        alert(`❌ 停止失败\n${result.error}`);
+      }
+    } catch (error) {
+      setIsStopping(false);
+      console.error("停止策略失败:", error);
+      alert(`❌ 停止失败\n${error instanceof Error ? error.message : "未知错误"}`);
     }
   };
 
-  if (isChecking) {
+  if (isChecking || isLoadingRun) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-slate-400">加载中...</div>
@@ -59,12 +111,28 @@ function StrategyDetailContent() {
     );
   }
 
-  if (!isLoggedIn) {
+  if (!isLoggedIn || !quantRun) {
     return null;
   }
 
   return (
     <div className="h-full flex flex-col bg-slate-950">
+      {/* Loading Overlay */}
+      {isStopping && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="glass-card rounded-xl p-6 flex flex-col items-center gap-4">
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 border-4 border-slate-700/30 rounded-full"></div>
+              <div className="absolute inset-0 border-4 border-transparent border-t-red-400 rounded-full animate-spin"></div>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-semibold text-slate-200 mb-1">正在停止策略</p>
+              <p className="text-sm text-slate-400">请稍候，正在处理...</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="glass-card border-b border-slate-700/50">
         <div className="max-w-md mx-auto px-4 py-4 flex items-center gap-3">
@@ -83,9 +151,13 @@ function StrategyDetailContent() {
         <div className="max-w-md mx-auto p-4 space-y-4">
           {/* Strategy Name */}
           <div className="glass-card rounded-xl p-4">
-            <h2 className="text-xl font-bold text-slate-100">{strategyName}</h2>
-            <div className="inline-block px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs font-medium mt-2">
-              运行中
+            <h2 className="text-xl font-bold text-slate-100">{quantRun.strategy.name}</h2>
+            <div className={`inline-block px-2 py-0.5 rounded text-xs font-medium mt-2 ${
+              quantRun.status === "RUNNING"
+                ? "bg-emerald-500/20 text-emerald-400"
+                : "bg-slate-700/50 text-slate-400"
+            }`}>
+              {quantRun.status === "RUNNING" ? "运行中" : "已停止"}
             </div>
           </div>
 
@@ -98,13 +170,13 @@ function StrategyDetailContent() {
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-400">账户初始</span>
                 <span className="text-base font-semibold text-slate-200 mono-num">
-                  ¥{initialFunds.toLocaleString()}
+                  {initialFunds.toFixed(2)} USDT
                 </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-400">当前资金</span>
                 <span className="text-base font-semibold text-slate-200 mono-num">
-                  ¥{currentFunds.toLocaleString()}
+                  {currentFunds.toFixed(2)} USDT
                 </span>
               </div>
               <div className="h-px bg-slate-700/50"></div>
@@ -116,7 +188,7 @@ function StrategyDetailContent() {
                       profit >= 0 ? "text-emerald-400" : "text-red-400"
                     }`}
                   >
-                    {profit >= 0 ? "+" : ""}¥{profit.toFixed(2)}
+                    {profit >= 0 ? "+" : ""}{profit.toFixed(2)} USDT
                   </p>
                   <p
                     className={`text-xs mono-num ${
@@ -179,12 +251,23 @@ function StrategyDetailContent() {
       {/* Bottom Action */}
       <div className="glass-card border-t border-slate-700/50">
         <div className="max-w-md mx-auto p-4">
-          <button
-            onClick={handleStop}
-            className="w-full py-3.5 bg-red-500/20 text-red-400 rounded-xl font-semibold hover:bg-red-500/30 border border-red-500/30 transition-colors"
-          >
-            停止策略
-          </button>
+          {quantRun.status === "RUNNING" ? (
+            <button
+              onClick={handleStop}
+              disabled={isStopping}
+              className={`w-full py-3.5 rounded-xl font-semibold border transition-colors ${
+                isStopping
+                  ? "bg-slate-700/20 text-slate-500 border-slate-700/30 cursor-not-allowed"
+                  : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+              }`}
+            >
+              {isStopping ? "停止中..." : "停止策略"}
+            </button>
+          ) : (
+            <div className="w-full py-3.5 bg-slate-700/20 text-slate-500 rounded-xl font-semibold border border-slate-700/30 text-center">
+              策略已停止
+            </div>
+          )}
         </div>
       </div>
     </div>

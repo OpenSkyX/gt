@@ -4,18 +4,21 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Upload, Sparkles } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { getMyProfileAction, updateMyProfileAction } from "../../actions/profile";
+import { readCachedProfile, writeCachedProfile } from "../../hooks/useProfileCache";
 
 export default function ProfileEditPage() {
   const router = useRouter();
   const { isLoggedIn, isChecking } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [phone, setPhone] = useState("");
-  const [userName, setUserName] = useState("");
-  const [avatarType, setAvatarType] = useState<"auto" | "upload">("auto");
-  const [avatarImage, setAvatarImage] = useState("");
-  const [avatarText, setAvatarText] = useState("GT");
-  const [avatarColor, setAvatarColor] = useState("from-cyan-500 to-blue-600");
+  const [phone, setPhone] = useState(() => readCachedProfile().phone);
+  const [userName, setUserName] = useState(() => readCachedProfile().userName);
+  const [avatarType, setAvatarType] = useState<"auto" | "upload">(() => readCachedProfile().avatarType);
+  const [avatarImage, setAvatarImage] = useState(() => readCachedProfile().avatarImage);
+  const [avatarText, setAvatarText] = useState(() => readCachedProfile().avatarText);
+  const [avatarColor, setAvatarColor] = useState(() => readCachedProfile().avatarColor);
+  const [isSaving, setIsSaving] = useState(false);
 
   // 预设渐变色
   const gradientColors = [
@@ -28,22 +31,20 @@ export default function ProfileEditPage() {
   ];
 
   useEffect(() => {
-    if (isLoggedIn) {
-      // 从 localStorage 获取用户信息
-      const savedPhone = localStorage.getItem("userPhone") || "";
-      const savedUserName = localStorage.getItem("userName") || "用户名";
-      const savedAvatarType = (localStorage.getItem("avatarType") as "auto" | "upload") || "auto";
-      const savedAvatarImage = localStorage.getItem("avatarImage") || "";
-      const savedAvatarText = localStorage.getItem("avatarText") || "GT";
-      const savedAvatarColor = localStorage.getItem("avatarColor") || "from-cyan-500 to-blue-600";
+    if (!isLoggedIn) return;
 
-      setPhone(savedPhone);
-      setUserName(savedUserName);
-      setAvatarType(savedAvatarType);
-      setAvatarImage(savedAvatarImage);
-      setAvatarText(savedAvatarText);
-      setAvatarColor(savedAvatarColor);
-    }
+    // 先用本地缓存立即展示，再从数据库校准最新数据
+    getMyProfileAction().then((result) => {
+      if (!result.success) return;
+      const profile = result.data;
+      setPhone(profile.phone);
+      setUserName(profile.userName);
+      setAvatarType(profile.avatarType);
+      setAvatarImage(profile.avatarImage);
+      setAvatarText(profile.avatarText);
+      setAvatarColor(profile.avatarColor);
+      writeCachedProfile(profile);
+    });
   }, [isLoggedIn]);
 
   // 自动生成头像
@@ -87,21 +88,34 @@ export default function ProfileEditPage() {
     reader.readAsDataURL(file);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!userName.trim()) {
       alert("请输入用户名");
       return;
     }
 
-    // 保存到 localStorage
-    localStorage.setItem("userName", userName);
-    localStorage.setItem("avatarType", avatarType);
-    localStorage.setItem("avatarImage", avatarImage);
-    localStorage.setItem("avatarText", avatarText);
-    localStorage.setItem("avatarColor", avatarColor);
+    setIsSaving(true);
+    try {
+      const result = await updateMyProfileAction({
+        userName,
+        avatarType,
+        avatarImage,
+        avatarText,
+        avatarColor,
+      });
+      if (!result.success) {
+        alert(result.error);
+        return;
+      }
 
-    alert("保存成功");
-    router.back();
+      // 立即写入本地缓存，返回“我的”页面时无需等待请求就能看到最新头像/用户名
+      writeCachedProfile({ ...result.data, phone });
+
+      alert("保存成功");
+      router.back();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (isChecking) {
@@ -231,9 +245,10 @@ export default function ProfileEditPage() {
         <div className="max-w-md mx-auto p-3">
           <button
             onClick={handleSave}
-            className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-semibold hover:from-cyan-600 hover:to-blue-700 transition-all shadow-lg shadow-cyan-500/20"
+            disabled={isSaving}
+            className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-semibold hover:from-cyan-600 hover:to-blue-700 transition-all shadow-lg shadow-cyan-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            保存
+            {isSaving ? "保存中..." : "保存"}
           </button>
         </div>
       </div>

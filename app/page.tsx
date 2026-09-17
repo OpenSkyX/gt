@@ -3,59 +3,8 @@
 import { useState, useRef, useEffect } from "react";
 import { RefreshCw } from "lucide-react";
 import { useAuth } from "./hooks/useAuth";
-
-interface RankingUser {
-  rank: number;
-  username: string;
-  assets: number;
-  profit: number;
-  profitRate: number;
-}
-
-function generateRandomData(): RankingUser[] {
-  const names = [
-    "交易高手",
-    "量化大师",
-    "投资达人",
-    "收益王者",
-    "策略专家",
-    "稳健投资",
-    "波段之王",
-    "趋势猎人",
-    "套利专家",
-    "价值发现",
-    "技术分析师",
-    "基本面研究",
-    "短线高手",
-    "长线投资",
-    "风险控制",
-  ];
-
-  // 先生成数据，不分配排名
-  const users = Array.from({ length: 15 }, (_, i) => {
-    const assets = Math.floor(Math.random() * 900000) + 100000;
-    const profitRate = (Math.random() * 30 + 5).toFixed(2);
-    const profit = Math.floor(assets * (parseFloat(profitRate) / 100));
-
-    return {
-      rank: 0, // 临时值
-      username: `${names[i % names.length]}${Math.floor(Math.random() * 999)}`,
-      assets,
-      profit,
-      profitRate: parseFloat(profitRate),
-    };
-  });
-
-  // 按收益金额降序排序
-  users.sort((a, b) => b.profit - a.profit);
-
-  // 排序后分配正确的排名
-  users.forEach((user, index) => {
-    user.rank = index + 1;
-  });
-
-  return users;
-}
+import { getRankingAction, type RankingUser } from "./actions/ranking";
+import { ContentLoading } from "./components/Loading";
 
 export default function Home() {
   const { isLoggedIn, isChecking } = useAuth();
@@ -65,10 +14,20 @@ export default function Home() {
   const touchStartY = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // 加载真实排行榜数据
   useEffect(() => {
-    if (isLoggedIn) {
-      setRankings(generateRandomData());
-    }
+    if (!isLoggedIn) return;
+
+    const fetchRankings = async () => {
+      setIsRefreshing(true);
+      const result = await getRankingAction();
+      if (result.success) {
+        setRankings(result.data);
+      }
+      setIsRefreshing(false);
+    };
+
+    fetchRankings();
   }, [isLoggedIn]);
 
   if (isChecking) {
@@ -85,8 +44,10 @@ export default function Home() {
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setRankings(generateRandomData());
+    const result = await getRankingAction();
+    if (result.success) {
+      setRankings(result.data);
+    }
     setIsRefreshing(false);
   };
 
@@ -191,7 +152,14 @@ export default function Home() {
 
         {/* Ranking List */}
         <div className="glass-card rounded-b-xl divide-y divide-slate-700/30">
-          {rankings.map((user) => (
+          {isRefreshing && rankings.length === 0 ? (
+            <ContentLoading />
+          ) : rankings.length === 0 ? (
+            <div className="px-4 py-12 text-center text-slate-500 text-sm">
+              暂无排行数据
+            </div>
+          ) : (
+            rankings.map((user) => (
             <div
               key={user.rank}
               className="px-4 py-3 hover:bg-slate-700/20 transition-colors"
@@ -214,24 +182,25 @@ export default function Home() {
                 </div>
 
                 {/* Assets */}
-                <div className="col-span-3 text-right">
-                  <p className="text-sm text-slate-300 mono-num">
-                    ¥{(user.assets / 10000).toFixed(1)}万
+                <div className="col-span-3 text-right overflow-hidden">
+                  <p className="text-sm text-slate-300 mono-num whitespace-nowrap">
+                    {Math.floor(user.assets).toLocaleString()}
                   </p>
                 </div>
 
                 {/* Profit */}
-                <div className="col-span-4 text-right">
-                  <p className="text-sm font-medium text-emerald-400 mono-num">
-                    +¥{(user.profit / 10000).toFixed(2)}万
+                <div className="col-span-4 text-right overflow-hidden">
+                  <p className="text-xs font-medium text-emerald-400 mono-num whitespace-nowrap">
+                    +{user.profit.toFixed(2)}
                   </p>
-                  <p className="text-xs text-emerald-400/70 mono-num">
+                  <p className="text-[10px] text-emerald-400/70 mono-num whitespace-nowrap">
                     +{user.profitRate}%
                   </p>
                 </div>
               </div>
             </div>
-          ))}
+            ))
+          )}
         </div>
 
         {/* Refresh Tip */}

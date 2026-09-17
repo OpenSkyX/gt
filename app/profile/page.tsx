@@ -4,35 +4,53 @@ import { Copy, Check } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../hooks/useAuth";
+import { logoutAction } from "../actions/auth";
+import { getMyReferralStatsAction, getMyProfileAction } from "../actions/profile";
+import { readCachedProfile, writeCachedProfile } from "../hooks/useProfileCache";
+import type { ReferralStats } from "@/lib/referral";
+
+const emptyStats: ReferralStats = {
+  directTotal: 0,
+  directActive: 0,
+  communityTotal: 0,
+  communityActive: 0,
+};
 
 export default function ProfilePage() {
   const router = useRouter();
   const { isLoggedIn, isChecking } = useAuth();
   const [copied, setCopied] = useState(false);
-  const [userName, setUserName] = useState("用户名");
-  const [avatarType, setAvatarType] = useState<"auto" | "upload">("auto");
-  const [avatarImage, setAvatarImage] = useState("");
-  const [avatarText, setAvatarText] = useState("GT");
-  const [avatarColor, setAvatarColor] = useState("from-cyan-500 to-blue-600");
-  const inviteCode = "ABC123456";
+  const [userName, setUserName] = useState(() => readCachedProfile().userName);
+  const [avatarType, setAvatarType] = useState<"auto" | "upload">(() => readCachedProfile().avatarType);
+  const [avatarImage, setAvatarImage] = useState(() => readCachedProfile().avatarImage);
+  const [avatarText, setAvatarText] = useState(() => readCachedProfile().avatarText);
+  const [avatarColor, setAvatarColor] = useState(() => readCachedProfile().avatarColor);
+  const [inviteCode, setInviteCode] = useState(() => readCachedProfile().inviteCode);
+  const [stats, setStats] = useState<ReferralStats>(emptyStats);
 
   useEffect(() => {
-    // 获取用户信息
-    if (isLoggedIn) {
-      const savedUserName = localStorage.getItem("userName");
-      const savedAvatarType = (localStorage.getItem("avatarType") as "auto" | "upload") || "auto";
-      const savedAvatarImage = localStorage.getItem("avatarImage") || "";
-      const savedAvatarText = localStorage.getItem("avatarText") || "GT";
-      const savedAvatarColor = localStorage.getItem("avatarColor") || "from-cyan-500 to-blue-600";
+    // 先用本地缓存立即展示，再从数据库校准最新数据
+    if (!isLoggedIn) return;
+    getMyProfileAction().then((result) => {
+      if (!result.success) return;
+      const profile = result.data;
+      setUserName(profile.userName);
+      setAvatarType(profile.avatarType);
+      setAvatarImage(profile.avatarImage);
+      setAvatarText(profile.avatarText);
+      setAvatarColor(profile.avatarColor);
+      setInviteCode(profile.inviteCode);
+      writeCachedProfile(profile);
+    });
+  }, [isLoggedIn]);
 
-      if (savedUserName) {
-        setUserName(savedUserName);
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    getMyReferralStatsAction().then((result) => {
+      if (result.success) {
+        setStats(result.data);
       }
-      setAvatarType(savedAvatarType);
-      setAvatarImage(savedAvatarImage);
-      setAvatarText(savedAvatarText);
-      setAvatarColor(savedAvatarColor);
-    }
+    });
   }, [isLoggedIn]);
 
   const handleCopyCode = () => {
@@ -41,11 +59,15 @@ export default function ProfilePage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleLogout = () => {
-    // 清除登录状态
+  const handleLogout = async () => {
+    // 清除服务端 session
+    await logoutAction();
+
+    // 清除本地登录状态
     localStorage.removeItem("isLoggedIn");
     localStorage.removeItem("userPhone");
     localStorage.removeItem("userName");
+    localStorage.removeItem("inviteCode");
 
     // 跳转到登录页
     router.push("/login");
@@ -119,25 +141,25 @@ export default function ProfilePage() {
           <div className="grid grid-cols-4 border-t border-slate-700/50">
             <div className="p-3 text-center">
               <p className="text-xl font-bold text-slate-200 mb-0.5 mono-num">
-                28
+                {stats.directTotal}
               </p>
               <p className="text-xs text-slate-500">直推</p>
             </div>
             <div className="p-3 text-center">
               <p className="text-xl font-bold text-emerald-400 mb-0.5 mono-num">
-                23
+                {stats.directActive}
               </p>
               <p className="text-xs text-slate-500">有效直推</p>
             </div>
             <div className="p-3 text-center">
               <p className="text-xl font-bold text-slate-200 mb-0.5 mono-num">
-                156
+                {stats.communityTotal}
               </p>
               <p className="text-xs text-slate-500">社区</p>
             </div>
             <div className="p-3 text-center">
               <p className="text-xl font-bold text-emerald-400 mb-0.5 mono-num">
-                142
+                {stats.communityActive}
               </p>
               <p className="text-xs text-slate-500">有效社区</p>
             </div>

@@ -1,21 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ArrowDownUp } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { getMyAssetsAction, type AssetInfo } from "../../actions/profile";
+import { transferAssetAction, type TransferType } from "../../actions/transfer";
 
 export default function TransferPage() {
   const router = useRouter();
   const { isLoggedIn, isChecking } = useAuth();
-
-  // 账户余额
-  const fundsBalance = 12345.67; // 资金账户
-  const pointsBalance = 2580; // 积分账户
+  const [assets, setAssets] = useState<AssetInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 划转方向：true = 资金→积分，false = 积分→资金
   const [direction, setDirection] = useState(true);
   const [amount, setAmount] = useState("");
+
+  // 获取资产信息
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const fetchAssets = async () => {
+      setIsLoading(true);
+      const result = await getMyAssetsAction();
+      if (result.success) {
+        setAssets(result.data);
+      }
+      setIsLoading(false);
+    };
+
+    fetchAssets();
+  }, [isLoggedIn]);
+
+  const fundsBalance = assets ? parseFloat(assets.fundingBalance) : 0;
+  const pointsBalance = assets ? parseFloat(assets.pointsBalance) : 0;
 
   // 获取当前账户信息
   const fromAccount = direction
@@ -38,7 +58,7 @@ export default function TransferPage() {
   };
 
   // 确认划转
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!amount || parseFloat(amount) <= 0) {
       alert("请输入划转金额");
       return;
@@ -48,13 +68,26 @@ export default function TransferPage() {
       return;
     }
 
-    const fromName = fromAccount.name;
-    const toName = toAccount.name;
-    alert(`划转成功\n从：${fromName}\n到：${toName}\n金额：${amount}`);
-    router.push("/assets");
+    setIsSubmitting(true);
+
+    const transferType: TransferType = direction ? "funding_to_points" : "points_to_funding";
+
+    const result = await transferAssetAction({
+      type: transferType,
+      amount: parseFloat(amount),
+    });
+
+    setIsSubmitting(false);
+
+    if (result.success) {
+      alert("划转成功！");
+      router.push("/assets");
+    } else {
+      alert(result.error || "划转失败");
+    }
   };
 
-  if (isChecking) {
+  if (isChecking || isLoading) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-slate-400">加载中...</div>
@@ -180,9 +213,14 @@ export default function TransferPage() {
         <div className="max-w-md mx-auto p-3">
           <button
             onClick={handleSubmit}
-            className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl font-semibold hover:from-cyan-600 hover:to-blue-700 transition-all shadow-lg shadow-cyan-500/20"
+            disabled={isSubmitting}
+            className={`w-full py-3 rounded-xl font-semibold transition-all shadow-lg ${
+              isSubmitting
+                ? "bg-slate-700/50 text-slate-500 cursor-not-allowed"
+                : "bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:from-cyan-600 hover:to-blue-700 shadow-cyan-500/20"
+            }`}
           >
-            确认划转
+            {isSubmitting ? "划转中..." : "确认划转"}
           </button>
         </div>
       </div>

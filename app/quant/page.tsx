@@ -1,8 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../hooks/useAuth";
+import {
+  getStrategiesAction,
+  getQuantRunsAction,
+  type StrategyInfo,
+  type QuantRunInfo
+} from "../actions/strategy";
 
 interface Strategy {
   id: string;
@@ -18,124 +24,86 @@ interface Strategy {
   badge?: string;
 }
 
-interface TradeHistory {
-  id: string;
-  strategyName: string;
-  startTime: string;
-  endTime: string;
-  initialFunds: number;
-  finalFunds: number;
-  profit: number;
-  runningTime: string;
-}
-
 export default function QuantPage() {
   const router = useRouter();
   const { isLoggedIn, isChecking } = useAuth();
   const [activeTab, setActiveTab] = useState<"strategies" | "history">("strategies");
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [isLoadingStrategies, setIsLoadingStrategies] = useState(true);
+  const [quantRuns, setQuantRuns] = useState<QuantRunInfo[]>([]);
+  const [isLoadingRuns, setIsLoadingRuns] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // 获取策略数据 - 每次进入页面都重新加载
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const fetchStrategies = async () => {
+      setIsLoadingStrategies(true);
+      const result = await getStrategiesAction();
+      if (result.success) {
+        // 根据用户的实盘运行状态设置策略状态
+        const strategiesWithStatus: Strategy[] = result.data.map((s) => ({
+          ...s,
+          status: s.userQuantRun?.status === "运行中" ? "运行中" : "可启用",
+          badge: s.badge || undefined,
+        }));
+        setStrategies(strategiesWithStatus);
+      }
+      setIsLoadingStrategies(false);
+    };
+
+    fetchStrategies();
+  }, [isLoggedIn, refreshKey]);
+
+  // 获取实盘历史数据 - 每次进入页面都重新加载
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const fetchQuantRuns = async () => {
+      setIsLoadingRuns(true);
+      const result = await getQuantRunsAction();
+      if (result.success) {
+        setQuantRuns(result.data);
+      }
+      setIsLoadingRuns(false);
+    };
+
+    fetchQuantRuns();
+  }, [isLoggedIn, refreshKey]);
+
+  // 监听页面可见性变化，页面显示时刷新数据
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isLoggedIn) {
+        // 页面变为可见时，强制刷新数据
+        setRefreshKey(prev => prev + 1);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isLoggedIn]);
 
   const handleStrategyClick = (strategy: Strategy) => {
     if (strategy.status === "可启用") {
-      // 跳转到配置页面
-      const params = new URLSearchParams({
-        id: strategy.id,
-        name: strategy.name,
-        desc: strategy.description,
-      });
-      router.push(`/quant/config?${params.toString()}`);
+      // 跳转到配置页面 - 启动新实盘
+      router.push(`/quant/config?id=${strategy.id}`);
     } else {
-      // 跳转到详情页面
-      const params = new URLSearchParams({
-        id: strategy.id,
-        name: strategy.name,
-      });
-      router.push(`/quant/detail?${params.toString()}`);
+      // 跳转到详情页面 - 查看运行中的实盘
+      // 需要传递实盘ID而不是策略ID
+      const quantRunId = (strategy as any).userQuantRun?.id;
+      if (quantRunId) {
+        router.push(`/quant/detail?runId=${quantRunId}`);
+      } else {
+        // 如果没有实盘ID，仍然跳转到配置页
+        router.push(`/quant/config?id=${strategy.id}`);
+      }
     }
   };
-
-  const strategies: Strategy[] = [
-    {
-      id: "high-frequency",
-      name: "高频策略",
-      icon: "⚡",
-      iconBg: "from-cyan-500 to-blue-600",
-      description:
-        "利用算法快速捕捉市场微小价格波动，通过高频率交易累积收益。适合追求短期高收益的投资者。",
-      features: [
-        "毫秒级交易执行",
-        "智能价差捕捉",
-        "自动风险控制",
-        "实时市场监控",
-      ],
-      expectedReturn: "15-25%",
-      riskLevel: "高",
-      minInvestment: "¥50,000",
-      status: "可启用",
-      badge: "热门",
-    },
-    {
-      id: "stable-fund",
-      name: "稳健基金",
-      icon: "🛡️",
-      iconBg: "from-blue-400 to-cyan-500",
-      description:
-        "专注于低风险、稳定回报的投资组合，通过分散配置降低波动。适合风险厌恶型和长期投资者。",
-      features: [
-        "分散投资组合",
-        "严格风控体系",
-        "定期再平衡",
-        "专业资产配置",
-      ],
-      expectedReturn: "8-12%",
-      riskLevel: "低",
-      minInvestment: "¥10,000",
-      status: "运行中",
-      badge: "推荐",
-    },
-  ];
-
-  const tradeHistory: TradeHistory[] = [
-    {
-      id: "1",
-      strategyName: "高频策略",
-      startTime: "2024-12-15 09:30",
-      endTime: "2024-12-22 18:45",
-      initialFunds: 50000,
-      finalFunds: 58230.5,
-      profit: 8230.5,
-      runningTime: "7天9小时15分",
-    },
-    {
-      id: "2",
-      strategyName: "稳健基金",
-      startTime: "2024-11-28 14:20",
-      endTime: "2024-12-14 10:30",
-      initialFunds: 30000,
-      finalFunds: 31245.8,
-      profit: 1245.8,
-      runningTime: "15天20小时10分",
-    },
-    {
-      id: "3",
-      strategyName: "高频策略",
-      startTime: "2024-11-10 11:00",
-      endTime: "2024-11-27 16:20",
-      initialFunds: 50000,
-      finalFunds: 47850.3,
-      profit: -2149.7,
-      runningTime: "17天5小时20分",
-    },
-    {
-      id: "4",
-      strategyName: "稳健基金",
-      startTime: "2024-10-22 09:15",
-      endTime: "2024-11-08 14:45",
-      initialFunds: 20000,
-      finalFunds: 21560.2,
-      profit: 1560.2,
-      runningTime: "17天5小时30分",
-    },
-  ];
 
   const getRiskColor = (level: string) => {
     switch (level) {
@@ -202,7 +170,17 @@ export default function QuantPage() {
           {/* Strategy Cards */}
           {activeTab === "strategies" && (
             <div className="space-y-3">
-          {strategies.map((strategy) => (
+              {isLoadingStrategies ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-slate-400">加载策略中...</div>
+                </div>
+              ) : strategies.length === 0 ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-slate-400">暂无策略</div>
+                </div>
+              ) : (
+                <>
+                  {strategies.map((strategy) => (
             <div
               key={strategy.id}
               className="glass-card rounded-xl overflow-hidden"
@@ -262,7 +240,7 @@ export default function QuantPage() {
                 {/* Stats Grid */}
                 <div className="grid grid-cols-3 gap-2 mb-3">
                   <div className="text-center p-2 bg-slate-800/50 rounded-lg border border-slate-700/50">
-                    <p className="text-xs text-slate-500 mb-0.5">预期年化</p>
+                    <p className="text-xs text-slate-500 mb-0.5">预期月化</p>
                     <p className="text-sm font-semibold text-slate-200 mono-num">
                       {strategy.expectedReturn}
                     </p>
@@ -298,96 +276,123 @@ export default function QuantPage() {
                 </button>
               </div>
             </div>
-          ))}
+                  ))}
 
-              {/* Bottom Tip */}
-              <div className="glass-card rounded-lg p-3 border border-cyan-500/20">
-                <div className="flex gap-2">
-                  <div className="flex-shrink-0 text-base">💡</div>
-                  <div>
-                    <p className="text-xs font-medium text-slate-300 mb-0.5">
-                      投资提示
-                    </p>
-                    <p className="text-xs text-slate-500 leading-relaxed">
-                      请根据自身风险承受能力选择合适的策略。建议分散投资，不要将所有资金投入单一策略。
-                    </p>
+                  {/* Bottom Tip */}
+                  <div className="glass-card rounded-lg p-3 border border-cyan-500/20">
+                    <div className="flex gap-2">
+                      <div className="flex-shrink-0 text-base">💡</div>
+                      <div>
+                        <p className="text-xs font-medium text-slate-300 mb-0.5">
+                          投资提示
+                        </p>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          请根据自身风险承受能力选择合适的策略。建议分散投资，不要将所有资金投入单一策略。
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                </>
+              )}
             </div>
           )}
 
           {/* Trade History */}
           {activeTab === "history" && (
             <div className="space-y-3">
-              {tradeHistory.map((history) => {
-                const profitRate = ((history.profit / history.initialFunds) * 100).toFixed(2);
-                return (
-                  <div
-                    key={history.id}
-                    className="glass-card rounded-xl p-4"
-                  >
-                    {/* Header */}
-                    <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-700/50">
-                      <h3 className="text-base font-semibold text-slate-100">
-                        {history.strategyName}
-                      </h3>
-                      <span
-                        className={`text-sm font-bold mono-num ${
-                          history.profit >= 0 ? "text-emerald-400" : "text-red-400"
-                        }`}
-                      >
-                        {history.profit >= 0 ? "+" : ""}¥{history.profit.toLocaleString()}
-                      </span>
-                    </div>
-
-                    {/* Stats Grid */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1">启动时间</p>
-                        <p className="text-sm text-slate-300 mono-num">
-                          {history.startTime}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1">结束时间</p>
-                        <p className="text-sm text-slate-300 mono-num">
-                          {history.endTime}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1">初始资金</p>
-                        <p className="text-sm font-medium text-slate-200 mono-num">
-                          ¥{history.initialFunds.toLocaleString()}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1">结束资金</p>
-                        <p className="text-sm font-medium text-slate-200 mono-num">
-                          ¥{history.finalFunds.toLocaleString()}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1">运行时间</p>
-                        <p className="text-sm text-slate-300">
-                          {history.runningTime}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1">收益率</p>
-                        <p
+              {isLoadingRuns ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-slate-400">加载实盘历史中...</div>
+                </div>
+              ) : quantRuns.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <div className="text-slate-400 mb-2">暂无实盘历史</div>
+                  <p className="text-xs text-slate-500">启用策略后，实盘记录将显示在这里</p>
+                </div>
+              ) : (
+                <>
+                  {quantRuns.map((run) => (
+                    <div
+                      key={run.id}
+                      className="glass-card rounded-xl p-4"
+                    >
+                      {/* Header */}
+                      <div className="flex items-center justify-between mb-3 pb-3 border-b border-slate-700/50">
+                        <div>
+                          <h3 className="text-base font-semibold text-slate-100">
+                            {run.strategyName}
+                          </h3>
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-xs font-medium mt-1 ${
+                              run.status === "运行中"
+                                ? "bg-emerald-500/20 text-emerald-400"
+                                : "bg-slate-700/50 text-slate-400"
+                            }`}
+                          >
+                            {run.status}
+                          </span>
+                        </div>
+                        <span
                           className={`text-sm font-bold mono-num ${
-                            history.profit >= 0 ? "text-emerald-400" : "text-red-400"
+                            run.profit >= 0 ? "text-emerald-400" : "text-red-400"
                           }`}
                         >
-                          {history.profit >= 0 ? "+" : ""}
-                          {profitRate}%
-                        </p>
+                          {run.profit >= 0 ? "+" : ""}{run.profit.toFixed(2)} USDT
+                        </span>
+                      </div>
+
+                      {/* Stats Grid */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">启动时间</p>
+                          <p className="text-sm text-slate-300 mono-num">
+                            {run.startTime}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">
+                            {run.status === "运行中" ? "当前状态" : "结束时间"}
+                          </p>
+                          <p className="text-sm text-slate-300 mono-num">
+                            {run.endTime || "运行中"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">初始资金</p>
+                          <p className="text-sm font-medium text-slate-200 mono-num">
+                            {run.initialFunds.toFixed(2)} USDT
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">
+                            {run.status === "运行中" ? "当前资金" : "结束资金"}
+                          </p>
+                          <p className="text-sm font-medium text-slate-200 mono-num">
+                            {(run.status === "运行中" ? run.currentFunds : run.finalFunds || 0).toFixed(2)} USDT
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">运行时间</p>
+                          <p className="text-sm text-slate-300">
+                            {run.runningTime}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">收益率</p>
+                          <p
+                            className={`text-sm font-bold mono-num ${
+                              run.profit >= 0 ? "text-emerald-400" : "text-red-400"
+                            }`}
+                          >
+                            {run.profit >= 0 ? "+" : ""}
+                            {run.profitRate}%
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  ))}
+                </>
+              )}
             </div>
           )}
         </div>

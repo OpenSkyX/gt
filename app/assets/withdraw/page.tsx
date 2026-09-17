@@ -1,45 +1,46 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, AlertCircle, X } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { getMyAssetsAction, type AssetInfo } from "../../actions/profile";
+import { withdrawAction } from "../../actions/withdraw";
 
 export default function WithdrawPage() {
   const router = useRouter();
   const { isLoggedIn, isChecking } = useAuth();
-
-  // 可提现余额
-  const availableBalance = 12345.67;
+  const [assets, setAssets] = useState<AssetInfo | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 表单状态
   const [amount, setAmount] = useState("");
   const [address, setAddress] = useState("");
-  const [verifyCode, setVerifyCode] = useState("");
-  const [countdown, setCountdown] = useState(0);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [fundPassword, setFundPassword] = useState("");
 
-  // 地址验证
+  // 获取资产信息
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const fetchAssets = async () => {
+      setIsLoading(true);
+      const result = await getMyAssetsAction();
+      if (result.success) {
+        setAssets(result.data);
+      }
+      setIsLoading(false);
+    };
+
+    fetchAssets();
+  }, [isLoggedIn]);
+
+  const availableBalance = assets ? parseFloat(assets.fundingBalance) : 0;
+
+  // 地址验证 (Arbitrum 使用 EVM 地址格式)
   const isValidAddress = (addr: string) => {
     return /^0x[a-fA-F0-9]{40}$/.test(addr);
-  };
-
-  // 发送验证码
-  const handleSendCode = () => {
-    if (countdown > 0) return;
-    // 模拟发送验证码
-    alert("验证码已发送");
-    setCountdown(60);
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
   };
 
   // 全部提现
@@ -67,11 +68,7 @@ export default function WithdrawPage() {
       return;
     }
     if (!isValidAddress(address)) {
-      alert("请输入正确的 ETH 地址");
-      return;
-    }
-    if (!verifyCode || verifyCode.length !== 6) {
-      alert("请输入 6 位验证码");
+      alert("请输入正确的 Arbitrum 地址");
       return;
     }
 
@@ -80,19 +77,33 @@ export default function WithdrawPage() {
   };
 
   // 确认提现
-  const handleConfirmWithdraw = () => {
-    if (!fundPassword || fundPassword.length !== 6) {
-      alert("请输入 6 位资金密码");
+  const handleConfirmWithdraw = async () => {
+    if (!fundPassword || fundPassword.length < 6) {
+      alert("请输入资金密码");
       return;
     }
 
-    // 模拟提现成功
-    alert(`提现成功\n金额：${amount} USDT\n地址：${address}`);
-    setShowPasswordModal(false);
-    router.push("/assets");
+    setIsSubmitting(true);
+
+    const result = await withdrawAction({
+      amount: parseFloat(amount),
+      address: address.trim(),
+      fundPassword,
+    });
+
+    setIsSubmitting(false);
+
+    if (result.success) {
+      alert("提现申请已提交，等待审核");
+      setShowPasswordModal(false);
+      setFundPassword("");
+      router.push("/assets");
+    } else {
+      alert(result.error || "提现失败");
+    }
   };
 
-  if (isChecking) {
+  if (isChecking || isLoading) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-slate-400">加载中...</div>
@@ -154,10 +165,7 @@ export default function WithdrawPage() {
               </div>
               {amount && parseFloat(amount) > 0 && (
                 <p className="text-xs text-slate-500 mt-1.5">
-                  手续费：{(parseFloat(amount) * 0.005).toFixed(2)} USDT (0.5%)
-                  <span className="ml-2">
-                    实际到账：{(parseFloat(amount) * 0.995).toFixed(2)} USDT
-                  </span>
+                  实际到账：{parseFloat(amount).toFixed(2)} USDT（无手续费）
                 </p>
               )}
             </div>
@@ -165,7 +173,7 @@ export default function WithdrawPage() {
             {/* Address */}
             <div>
               <label className="text-xs text-slate-400 mb-2 block">
-                提现地址 (ETH 主网)
+                提现地址 (Arbitrum)
               </label>
               <input
                 type="text"
@@ -177,37 +185,9 @@ export default function WithdrawPage() {
               {address && !isValidAddress(address) && (
                 <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" />
-                  请输入正确的 ETH 地址
+                  请输入正确的 Arbitrum 地址
                 </p>
               )}
-            </div>
-
-            {/* Verify Code */}
-            <div>
-              <label className="text-xs text-slate-400 mb-2 block">
-                手机验证码
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={verifyCode}
-                  onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  placeholder="6 位验证码"
-                  maxLength={6}
-                  className="flex-1 px-3 py-2.5 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500/50 mono-num"
-                />
-                <button
-                  onClick={handleSendCode}
-                  disabled={countdown > 0}
-                  className={`px-4 py-2.5 rounded-lg text-xs font-medium transition-colors ${
-                    countdown > 0
-                      ? "bg-slate-700/50 text-slate-500"
-                      : "bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30"
-                  }`}
-                >
-                  {countdown > 0 ? `${countdown}s` : "发送"}
-                </button>
-              </div>
             </div>
           </div>
 
@@ -220,9 +200,10 @@ export default function WithdrawPage() {
                   提现须知
                 </h3>
                 <div className="text-xs text-slate-400 leading-relaxed space-y-0.5">
-                  <p>• 仅支持 ETH 主网 USDT 提现</p>
-                  <p>• 最小提现 10 USDT，手续费 0.5%</p>
-                  <p>• 预计 30 分钟内到账</p>
+                  <p>• 仅支持 Arbitrum 网络 USDT (ERC20) 提现</p>
+                  <p>• 最小提现 10 USDT，无手续费</p>
+                  <p>• 提现申请需要人工审核，审核通过后 1-3 分钟到账</p>
+                  <p>• 审核时间：工作日 9:00-18:00</p>
                 </div>
               </div>
             </div>
@@ -292,9 +273,14 @@ export default function WithdrawPage() {
                 </button>
                 <button
                   onClick={handleConfirmWithdraw}
-                  className="flex-1 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg font-medium hover:from-cyan-600 hover:to-blue-700 transition-all"
+                  disabled={isSubmitting}
+                  className={`flex-1 py-2.5 rounded-lg font-medium transition-all ${
+                    isSubmitting
+                      ? "bg-slate-700/50 text-slate-500 cursor-not-allowed"
+                      : "bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:from-cyan-600 hover:to-blue-700"
+                  }`}
                 >
-                  确认
+                  {isSubmitting ? "提交中..." : "确认"}
                 </button>
               </div>
             </div>

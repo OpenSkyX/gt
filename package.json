@@ -6,22 +6,42 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:seed-strategies": "tsx prisma/seed-strategies.ts",
+    "db:seed-quant-runs": "tsx prisma/seed-quant-runs.ts",
+    "deposit-monitor": "tsx scripts/deposit-monitor.ts",
+    "sync:quant-runs": "tsx scripts/sync-quant-runs.ts",
+    "cron:sync-quant-runs": "tsx scripts/cron-sync-quant-runs.ts"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "ethers": "^6.17.0",
+    "gate-api": "^7.2.132",
     "lucide-react": "^1.42.0",
     "next": "16.3.4",
+    "p-limit": "^7.3.2",
+    "pg": "^8.23.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "react-qr-code": "^2.2.0",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
+    "prisma": "^7.10.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }
