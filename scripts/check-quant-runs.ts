@@ -1,7 +1,4 @@
-// 使用项目配置的 Prisma Client 路径
-const { PrismaClient } = require("../app/generated/prisma");
-
-const prisma = new PrismaClient();
+import { prisma } from "../lib/prisma";
 
 async function main() {
   // 查询所有运行中的实盘
@@ -28,7 +25,7 @@ async function main() {
 
   let totalLocked = 0;
 
-  runningTrades.forEach((trade, index) => {
+  runningTrades.forEach((trade: any, index: number) => {
     const locked = Number(trade.initialBalance);
     totalLocked += locked;
 
@@ -40,8 +37,6 @@ async function main() {
   });
 
   console.log(`总锁定保证金: ${totalLocked}\n`);
-
-  await prisma.$disconnect();
 }
 
 main().catch(console.error);
